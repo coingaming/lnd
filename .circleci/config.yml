@@ -17,22 +17,18 @@ commands:
 
 jobs:
   release:
-    docker:
-      - image: alpine:3.9.6
+    machine: true
     resource_class: xlarge
     working_directory: ~/project
     steps:
       - checkout
-      - setup_remote_docker
       - docker_build
   release-publish:
-    docker:
-      - image: alpine:3.9.6
+    machine: true
     resource_class: xlarge
     working_directory: ~/project
     steps:
       - checkout
-      - setup_remote_docker
       - docker_build
       - docker_push
 
