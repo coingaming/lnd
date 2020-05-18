@@ -20,6 +20,7 @@ jobs:
     docker:
       - image: alpine:3.9.6
     resource_class: xlarge
+    working_directory: ~/project
     steps:
       - checkout
       - setup_remote_docker
@@ -28,6 +29,7 @@ jobs:
     docker:
       - image: alpine:3.9.6
     resource_class: xlarge
+    working_directory: ~/project
     steps:
       - checkout
       - setup_remote_docker
