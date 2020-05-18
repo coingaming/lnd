@@ -18,14 +18,12 @@ commands:
 jobs:
   release:
     machine: true
-    resource_class: xlarge
     working_directory: ~/project
     steps:
       - checkout
       - docker_build
   release-publish:
     machine: true
-    resource_class: xlarge
     working_directory: ~/project
     steps:
       - checkout
