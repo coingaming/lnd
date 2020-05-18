@@ -5,7 +5,7 @@ commands:
     steps:
       - run:
           name: Docker build
-          command: ./release.sh
+          command: ~/project/release.sh
   docker_push:
     steps:
       - run:
@@ -13,7 +13,7 @@ commands:
           command: echo -e "$DOCKER_PASS" | docker login -u $DOCKER_USER --password-stdin
       - run:
           name: Docker push
-          command: ./release.sh --push
+          command: ~/project/release.sh --push
 
 jobs:
   release:
