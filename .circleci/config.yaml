@@ -1,0 +1,51 @@
+version: 2.1
+
+commands:
+  docker_build:
+    steps:
+      - run:
+          name: Docker build
+          command: ./release.sh
+  docker_push:
+    steps:
+      - run:
+          name: Docker login
+          command: echo -e "$DOCKER_PASS" | docker login -u $DOCKER_USER --password-stdin
+      - run:
+          name: Docker push
+          command: ./release.sh --push
+
+jobs:
+  release:
+    steps:
+      - checkout
+      - setup_remote_docker
+      - docker_build
+  release-publish:
+    resource_class: xlarge
+    steps:
+      - checkout
+      - setup_remote_docker
+      - docker_build
+      - docker_push
+
+filters: &filters
+  filters:
+    branches: {}
+
+workflows:
+  version: 2
+  nightly:
+    triggers:
+      - schedule:
+          <<: *filters
+          cron: "0 5 * * *"
+    jobs:
+      - release:
+          <<: *filters
+          context: global
+  push:
+    jobs:
+      - release-publish:
+          <<: *filters
+          context: global
