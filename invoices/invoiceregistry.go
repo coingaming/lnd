@@ -263,15 +263,7 @@ func (i *InvoiceRegistry) invoiceEventLoop() {
 			// we'll dispatch notifications to all registered
 			// clients.
 			case *invoiceEvent:
-				// For backwards compatibility, do not notify
-				// all invoice subscribers of cancel and accept
-				// events.
-				state := e.invoice.State
-				if state != channeldb.ContractCanceled &&
-					state != channeldb.ContractAccepted {
-
-					i.dispatchToClients(e)
-				}
+				i.dispatchToClients(e)
 				i.dispatchToSingleClients(e)
 
 			// A new single invoice subscription has arrived. Add it
@@ -1125,6 +1117,16 @@ type InvoiceSubscription struct {
 	// StartingInvoiceIndex field.
 	SettledInvoices chan *channeldb.Invoice
 
+	// AcceptedInvoices is a channel that we'll use to send all accepted
+	// invoices with an invoice index greater than the specified
+	// StartingInvoiceIndex field.
+	AcceptedInvoices chan *channeldb.Invoice
+
+	// CancelledInvoices is a channel that we'll use to send all cancelled
+	// invoices with an invoice index greater than the specified
+	// StartingInvoiceIndex field.
+	CancelledInvoices chan *channeldb.Invoice
+
 	// addIndex is the highest add index the caller knows of. We'll use
 	// this information to send out an event backlog to the notifications
 	// subscriber. Any new add events with an index greater than this will
@@ -1188,10 +1190,12 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 	addIndex, settleIndex uint64) (*InvoiceSubscription, error) {
 
 	client := &InvoiceSubscription{
-		NewInvoices:     make(chan *channeldb.Invoice),
-		SettledInvoices: make(chan *channeldb.Invoice),
-		addIndex:        addIndex,
-		settleIndex:     settleIndex,
+		NewInvoices:       make(chan *channeldb.Invoice),
+		SettledInvoices:   make(chan *channeldb.Invoice),
+		CancelledInvoices: make(chan *channeldb.Invoice),
+		AcceptedInvoices:  make(chan *channeldb.Invoice),
+		addIndex:          addIndex,
+		settleIndex:       settleIndex,
 		invoiceSubscriptionKit: invoiceSubscriptionKit{
 			inv:        i,
 			ntfnQueue:  queue.NewConcurrentQueue(20),
@@ -1229,6 +1233,10 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 					targetChan = client.NewInvoices
 				case channeldb.ContractSettled:
 					targetChan = client.SettledInvoices
+				case channeldb.ContractAccepted:
+					targetChan = client.AcceptedInvoices
+				case channeldb.ContractCanceled:
+					targetChan = client.CancelledInvoices
 				default:
 					log.Errorf("unknown invoice "+
 						"state: %v", state)

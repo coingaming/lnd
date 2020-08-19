@@ -4719,6 +4719,30 @@ func (r *rpcServer) SubscribeInvoices(req *lnrpc.InvoiceSubscription,
 				return err
 			}
 
+		case cancelledInvoice := <-invoiceClient.CancelledInvoices:
+			rpcInvoice, err := invoicesrpc.CreateRPCInvoice(
+				cancelledInvoice, activeNetParams.Params,
+			)
+			if err != nil {
+				return err
+			}
+
+			if err := updateStream.Send(rpcInvoice); err != nil {
+				return err
+			}
+
+		case acceptedInvoice := <-invoiceClient.AcceptedInvoices:
+			rpcInvoice, err := invoicesrpc.CreateRPCInvoice(
+				acceptedInvoice, activeNetParams.Params,
+			)
+			if err != nil {
+				return err
+			}
+
+			if err := updateStream.Send(rpcInvoice); err != nil {
+				return err
+			}
+
 		case <-r.quit:
 			return nil
 		}

@@ -298,8 +298,19 @@ func TestCancelInvoice(t *testing.T) {
 		t.Fatal("no update received")
 	}
 
-	// We expect no cancel notification to be sent to all invoice
-	// subscribers (backwards compatibility).
+	// We expect cancel notification to be sent to all invoice
+	// subscribers
+	select {
+	case update := <-allSubscriptions.CancelledInvoices:
+		if update.State != channeldb.ContractCanceled {
+			t.Fatalf(
+				"expected state ContractCancelled, but got %v",
+				update.State,
+			)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("no update received")
+	}
 
 	// Try to cancel again.
 	err = ctx.registry.CancelInvoice(testInvoicePaymentHash)
@@ -463,6 +474,20 @@ func TestSettleHoldInvoice(t *testing.T) {
 	}
 	if update.AmtPaid != amtPaid {
 		t.Fatal("invoice AmtPaid incorrect")
+	}
+
+	// We expect accept notification to be sent to all invoice
+	// subscribers
+	select {
+	case update := <-allSubscriptions.AcceptedInvoices:
+		if update.State != channeldb.ContractAccepted {
+			t.Fatalf(
+				"expected state ContractAccepted, but got %v",
+				update.State,
+			)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("no update received")
 	}
 
 	// Settling with preimage should succeed.
