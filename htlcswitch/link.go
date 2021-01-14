@@ -1450,6 +1450,7 @@ func (l *channelLink) handleDownstreamPkt(pkt *htlcPacket) {
 		l.cfg.HtlcNotifier.NotifySettleEvent(
 			newHtlcKey(pkt),
 			getEventType(pkt),
+			pkt.incomingAmount,
 		)
 
 		// Immediately update the commitment tx to minimize latency.
@@ -2983,6 +2984,7 @@ func (l *channelLink) settleHTLC(preimage lntypes.Preimage,
 			},
 		},
 		HtlcEventTypeReceive,
+		pd.Amount,
 	)
 
 	return nil

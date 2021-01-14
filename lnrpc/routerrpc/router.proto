@@ -494,6 +494,7 @@ message ForwardFailEvent {
 }
 
 message SettleEvent {
+    uint64 incoming_amt_msat = 1;
 }
 
 message LinkFailEvent {

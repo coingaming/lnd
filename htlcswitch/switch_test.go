@@ -3109,6 +3109,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 			},
 			HtlcEventType: HtlcEventTypeReceive,
 			Timestamp:     ts,
+			IncomingAmt:   hops[1].FwdInfo.AmountToForward,
 		},
 	}
 

@@ -1364,7 +1364,13 @@
       }
     },
     "routerrpcSettleEvent": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "incoming_amt_msat": {
+          "type": "string",
+          "format": "uint64"
+        }
+      }
     },
     "runtimeError": {
       "type": "object",

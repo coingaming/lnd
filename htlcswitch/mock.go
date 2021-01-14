@@ -943,5 +943,5 @@ func (h *mockHTLCNotifier) NotifyForwardingFailEvent(key HtlcKey,
 	eventType HtlcEventType) {
 }
 
-func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType) {
+func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType, incomingAmt lnwire.MilliSatoshi) {
 }

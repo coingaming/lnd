@@ -285,6 +285,8 @@ type SettleEvent struct {
 
 	// Timestamp is the time when this htlc was settled.
 	Timestamp time.Time
+
+	IncomingAmt lnwire.MilliSatoshi
 }
 
 // NotifyForwardingEvent notifies the HtlcNotifier than a htlc has been
@@ -358,11 +360,12 @@ func (h *HtlcNotifier) NotifyForwardingFailEvent(key HtlcKey,
 // to as part of a forward or a receive to our node has been settled.
 //
 // Note this is part of the htlcNotifier interface.
-func (h *HtlcNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType) {
+func (h *HtlcNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType, incomingAmt lnwire.MilliSatoshi) {
 	event := &SettleEvent{
 		HtlcKey:       key,
 		HtlcEventType: eventType,
 		Timestamp:     h.now(),
+		IncomingAmt:   incomingAmt,
 	}
 
 	log.Tracef("Notifying settle event: %v over %v", eventType, key)
