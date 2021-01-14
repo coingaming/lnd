@@ -62,7 +62,9 @@ func rpcHtlcEvent(htlcEvent interface{}) (*HtlcEvent, error) {
 
 	case *htlcswitch.SettleEvent:
 		event = &HtlcEvent_SettleEvent{
-			SettleEvent: &SettleEvent{},
+			SettleEvent: &SettleEvent{
+				IncomingAmtMsat: uint64(e.IncomingAmt),
+			},
 		}
 
 		key = e.HtlcKey
