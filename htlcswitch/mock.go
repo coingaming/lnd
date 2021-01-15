@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"io"
 	"io/ioutil"
 	"net"
@@ -932,7 +933,7 @@ var _ htlcNotifier = (*mockHTLCNotifier)(nil)
 type mockHTLCNotifier struct{}
 
 func (h *mockHTLCNotifier) NotifyForwardingEvent(key HtlcKey, info HtlcInfo,
-	eventType HtlcEventType) {
+	eventType HtlcEventType, paymentHash lnwallet.PaymentHash) {
 }
 
 func (h *mockHTLCNotifier) NotifyLinkFailEvent(key HtlcKey, info HtlcInfo,
@@ -943,5 +944,5 @@ func (h *mockHTLCNotifier) NotifyForwardingFailEvent(key HtlcKey,
 	eventType HtlcEventType) {
 }
 
-func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType) {
+func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType, incomingAmt lnwire.MilliSatoshi, paymentHash lnwallet.PaymentHash) {
 }

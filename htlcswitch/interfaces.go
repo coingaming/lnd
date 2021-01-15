@@ -267,7 +267,7 @@ type htlcNotifier interface {
 	// NotifyForwardingEvent notifies the HtlcNotifier than a htlc has been
 	// forwarded.
 	NotifyForwardingEvent(key HtlcKey, info HtlcInfo,
-		eventType HtlcEventType)
+		eventType HtlcEventType, paymentHash lnwallet.PaymentHash)
 
 	// NotifyIncomingLinkFailEvent notifies that a htlc has failed on our
 	// incoming link. It takes an isReceive bool to differentiate between
@@ -282,5 +282,5 @@ type htlcNotifier interface {
 	// NotifySettleEvent notifies the HtlcNotifier that a htlc that we
 	// committed to as part of a forward or a receive to our node has been
 	// settled.
-	NotifySettleEvent(key HtlcKey, eventType HtlcEventType)
+	NotifySettleEvent(key HtlcKey, eventType HtlcEventType, incomingAmt lnwire.MilliSatoshi, paymentHash lnwallet.PaymentHash)
 }

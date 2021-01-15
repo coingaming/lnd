@@ -2,6 +2,7 @@ package htlcswitch
 
 import (
 	"fmt"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"strings"
 	"sync"
 	"time"
@@ -221,6 +222,8 @@ type ForwardingEvent struct {
 
 	// Timestamp is the time when this htlc was forwarded.
 	Timestamp time.Time
+
+	PaymentHash lnwallet.PaymentHash
 }
 
 // LinkFailEvent describes a htlc that failed on our incoming or outgoing
@@ -285,6 +288,10 @@ type SettleEvent struct {
 
 	// Timestamp is the time when this htlc was settled.
 	Timestamp time.Time
+
+	IncomingAmt lnwire.MilliSatoshi
+
+	PaymentHash lnwallet.PaymentHash
 }
 
 // NotifyForwardingEvent notifies the HtlcNotifier than a htlc has been
@@ -292,13 +299,14 @@ type SettleEvent struct {
 //
 // Note this is part of the htlcNotifier interface.
 func (h *HtlcNotifier) NotifyForwardingEvent(key HtlcKey, info HtlcInfo,
-	eventType HtlcEventType) {
+	eventType HtlcEventType, paymentHash lnwallet.PaymentHash) {
 
 	event := &ForwardingEvent{
 		HtlcKey:       key,
 		HtlcInfo:      info,
 		HtlcEventType: eventType,
 		Timestamp:     h.now(),
+		PaymentHash:   paymentHash,
 	}
 
 	log.Tracef("Notifying forward event: %v over %v, %v", eventType, key,
@@ -358,11 +366,13 @@ func (h *HtlcNotifier) NotifyForwardingFailEvent(key HtlcKey,
 // to as part of a forward or a receive to our node has been settled.
 //
 // Note this is part of the htlcNotifier interface.
-func (h *HtlcNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType) {
+func (h *HtlcNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType, incomingAmt lnwire.MilliSatoshi, paymentHash lnwallet.PaymentHash) {
 	event := &SettleEvent{
 		HtlcKey:       key,
 		HtlcEventType: eventType,
 		Timestamp:     h.now(),
+		IncomingAmt:   incomingAmt,
+		PaymentHash:   paymentHash,
 	}
 
 	log.Tracef("Notifying settle event: %v over %v", eventType, key)

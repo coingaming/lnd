@@ -899,6 +899,10 @@
         "info": {
           "$ref": "#/definitions/routerrpcHtlcInfo",
           "description": "Info contains details about the htlc that was forwarded."
+        },
+        "preimage_hash": {
+          "type": "string",
+          "format": "byte"
         }
       }
     },
@@ -1364,7 +1368,17 @@
       }
     },
     "routerrpcSettleEvent": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "incoming_amt_msat": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "preimage_hash": {
+          "type": "string",
+          "format": "byte"
+        }
+      }
     },
     "runtimeError": {
       "type": "object",

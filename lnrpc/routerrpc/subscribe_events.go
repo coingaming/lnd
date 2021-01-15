@@ -22,7 +22,8 @@ func rpcHtlcEvent(htlcEvent interface{}) (*HtlcEvent, error) {
 	case *htlcswitch.ForwardingEvent:
 		event = &HtlcEvent_ForwardEvent{
 			ForwardEvent: &ForwardEvent{
-				Info: rpcInfo(e.HtlcInfo),
+				Info:         rpcInfo(e.HtlcInfo),
+				PreimageHash: e.PaymentHash[:],
 			},
 		}
 
@@ -62,7 +63,10 @@ func rpcHtlcEvent(htlcEvent interface{}) (*HtlcEvent, error) {
 
 	case *htlcswitch.SettleEvent:
 		event = &HtlcEvent_SettleEvent{
-			SettleEvent: &SettleEvent{},
+			SettleEvent: &SettleEvent{
+				IncomingAmtMsat: uint64(e.IncomingAmt),
+				PreimageHash:    e.PaymentHash[:],
+			},
 		}
 
 		key = e.HtlcKey
