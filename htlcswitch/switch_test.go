@@ -3026,6 +3026,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 			},
 			HtlcEventType: HtlcEventTypeSend,
 			Timestamp:     ts,
+			PaymentHash:   htlc.PaymentHash,
 		},
 	}
 
@@ -3081,6 +3082,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 			HtlcKey:       aliceKey,
 			HtlcEventType: HtlcEventTypeSend,
 			Timestamp:     ts,
+			PaymentHash:   htlc.PaymentHash,
 		},
 	)
 
@@ -3090,11 +3092,14 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 			HtlcInfo:      bobInfo,
 			HtlcEventType: HtlcEventTypeForward,
 			Timestamp:     ts,
+			PaymentHash:   htlc.PaymentHash,
 		},
 		&SettleEvent{
 			HtlcKey:       bobKey,
 			HtlcEventType: HtlcEventTypeForward,
 			Timestamp:     ts,
+			IncomingAmt:   bobInfo.IncomingAmt,
+			PaymentHash:   htlc.PaymentHash,
 		},
 	}
 
@@ -3110,6 +3115,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 			HtlcEventType: HtlcEventTypeReceive,
 			Timestamp:     ts,
 			IncomingAmt:   hops[1].FwdInfo.AmountToForward,
+			PaymentHash:   htlc.PaymentHash,
 		},
 	}
 

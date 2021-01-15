@@ -1369,6 +1369,7 @@ func (l *channelLink) handleDownstreamUpdateAdd(pkt *htlcPacket) error {
 			OutgoingAmt:      htlc.Amount,
 		},
 		getEventType(pkt),
+		pkt.circuit.PaymentHash,
 	)
 
 	l.tryBatchUpdateCommitTx()
@@ -1450,7 +1451,8 @@ func (l *channelLink) handleDownstreamPkt(pkt *htlcPacket) {
 		l.cfg.HtlcNotifier.NotifySettleEvent(
 			newHtlcKey(pkt),
 			getEventType(pkt),
-			pkt.incomingAmount,
+			pkt.circuit.IncomingAmount,
+			pkt.circuit.PaymentHash,
 		)
 
 		// Immediately update the commitment tx to minimize latency.
@@ -2985,6 +2987,7 @@ func (l *channelLink) settleHTLC(preimage lntypes.Preimage,
 		},
 		HtlcEventTypeReceive,
 		pd.Amount,
+		pd.RHash,
 	)
 
 	return nil

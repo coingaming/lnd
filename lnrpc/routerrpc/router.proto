@@ -488,6 +488,7 @@ message HtlcInfo {
 message ForwardEvent {
     // Info contains details about the htlc that was forwarded.
     HtlcInfo info = 1;
+    bytes preimage_hash = 2;
 }
 
 message ForwardFailEvent {
@@ -495,6 +496,7 @@ message ForwardFailEvent {
 
 message SettleEvent {
     uint64 incoming_amt_msat = 1;
+    bytes preimage_hash = 2;
 }
 
 message LinkFailEvent {
