@@ -14,6 +14,22 @@ import (
 // to prevent an HTLC being failed if some blocks are mined while it's in-flight.
 const BlockPadding uint16 = 3
 
+// ValidateCLTVLimit is a helper function that validates that the cltv limit is
+// greater than the final cltv delta parameter, optionally including the
+// BlockPadding in this calculation.
+func ValidateCLTVLimit(limit uint32, delta uint16, includePad bool) error {
+	if includePad {
+		delta += BlockPadding
+	}
+
+	if limit <= uint32(delta) {
+		return fmt.Errorf("cltv limit %v should be greater than %v",
+			limit, delta)
+	}
+
+	return nil
+}
+
 // noRouteError encodes a non-critical error encountered during path finding.
 type noRouteError uint8
 
@@ -171,7 +187,7 @@ func newPaymentSession(p *LightningPayment,
 		return nil, err
 	}
 
-	logPrefix := fmt.Sprintf("PaymentSession(%x):", p.PaymentHash)
+	logPrefix := fmt.Sprintf("PaymentSession(%x):", p.Identifier())
 
 	return &paymentSession{
 		additionalEdges:   edges,
@@ -230,6 +246,18 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	finalHtlcExpiry := int32(height) + int32(finalCltvDelta)
 
+	// Before we enter the loop below, we'll make sure to respect the max
+	// payment shard size (if it's set), which is effectively our
+	// client-side MTU that we'll attempt to respect at all times.
+	maxShardActive := p.payment.MaxShardAmt != nil
+	if maxShardActive && maxAmt > *p.payment.MaxShardAmt {
+		p.log.Debug("Clamping payment attempt from %v to %v due to "+
+			"max shard size of %v", maxAmt,
+			*p.payment.MaxShardAmt, maxAmt)
+
+		maxAmt = *p.payment.MaxShardAmt
+	}
+
 	for {
 		// We'll also obtain a set of bandwidthHints from the lower
 		// layer for each of our outbound channels. This will allow the
@@ -274,6 +302,22 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 			if p.payment.PaymentAddr == nil {
 				p.log.Debugf("not splitting because payment " +
 					"address is unspecified")
+
+				return nil, errNoPathFound
+			}
+
+			if p.payment.DestFeatures == nil {
+				p.log.Debug("Not splitting because " +
+					"destination DestFeatures is nil")
+				return nil, errNoPathFound
+			}
+
+			destFeatures := p.payment.DestFeatures
+			if !destFeatures.HasFeature(lnwire.MPPOptional) &&
+				!destFeatures.HasFeature(lnwire.AMPOptional) {
+
+				p.log.Debug("not splitting because " +
+					"destination doesn't declare MPP or AMP")
 
 				return nil, errNoPathFound
 			}

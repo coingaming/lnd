@@ -204,6 +204,7 @@ out:
 		FinalCltvDelta: int32(carolPayReq.CltvExpiry),
 		TimeoutSeconds: 60,
 		FeeLimitMsat:   noFeeLimitMsat,
+		MaxParts:       1,
 	}
 	sendAndAssertFailure(
 		t, net.Alice,
@@ -240,6 +241,7 @@ out:
 		FinalCltvDelta: int32(carolPayReq.CltvExpiry),
 		TimeoutSeconds: 60,
 		FeeLimitMsat:   noFeeLimitMsat,
+		MaxParts:       1,
 	}
 	sendAndAssertFailure(
 		t, net.Alice,
@@ -294,12 +296,15 @@ out:
 		if err != nil {
 			t.Fatalf("unable to generate carol invoice: %v", err)
 		}
+
+		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 		sendAndAssertSuccess(
-			t, net.Bob,
+			ctxt, t, net.Bob,
 			&routerrpc.SendPaymentRequest{
 				PaymentRequest: carolInvoice2.PaymentRequest,
 				TimeoutSeconds: 60,
 				FeeLimitMsat:   noFeeLimitMsat,
+				MaxParts:       1,
 			},
 		)
 
@@ -332,6 +337,7 @@ out:
 		PaymentRequest: carolInvoice3.PaymentRequest,
 		TimeoutSeconds: 60,
 		FeeLimitMsat:   noFeeLimitMsat,
+		MaxParts:       1,
 	}
 	sendAndAssertFailure(
 		t, net.Alice,
@@ -381,6 +387,7 @@ out:
 			PaymentRequest: carolInvoice.PaymentRequest,
 			TimeoutSeconds: 60,
 			FeeLimitMsat:   noFeeLimitMsat,
+			MaxParts:       1,
 		},
 		lnrpc.PaymentFailureReason_FAILURE_REASON_NO_ROUTE,
 	)

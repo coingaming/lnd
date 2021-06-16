@@ -10,32 +10,32 @@ based on protocol buffers and as such, you will need to compile the lnd proto
 file in Python before you can use it to communicate with lnd.
 
 1. Create a virtual environment for your project
-    ```
-    $ virtualenv lnd
+    ```shell
+    ⛰  virtualenv lnd
     ```
 2. Activate the virtual environment
-    ```
-    $ source lnd/bin/activate
+    ```shell
+    ⛰  source lnd/bin/activate
     ```
 3. Install dependencies (googleapis-common-protos is required due to the use of
   google/api/annotations.proto)
-    ```
-    (lnd)$ pip install grpcio grpcio-tools googleapis-common-protos
+    ```shell
+    lnd ⛰  pip install grpcio grpcio-tools googleapis-common-protos
     ```
 4. Clone the google api's repository (required due to the use of
   google/api/annotations.proto)
-    ```
-    (lnd)$ git clone https://github.com/googleapis/googleapis.git
+    ```shell
+    lnd ⛰  git clone https://github.com/googleapis/googleapis.git
     ```
 5. Copy the lnd rpc.proto file (you'll find this at
   [lnrpc/rpc.proto](https://github.com/lightningnetwork/lnd/blob/master/lnrpc/rpc.proto))
   or just download it
-    ```
-    (lnd)$ curl -o rpc.proto -s https://raw.githubusercontent.com/lightningnetwork/lnd/master/lnrpc/rpc.proto
+    ```shell
+    lnd ⛰  curl -o rpc.proto -s https://raw.githubusercontent.com/lightningnetwork/lnd/master/lnrpc/rpc.proto
     ```
 6. Compile the proto file
-    ```
-    (lnd)$ python -m grpc_tools.protoc --proto_path=googleapis:. --python_out=. --grpc_python_out=. rpc.proto
+    ```shell
+    lnd ⛰  python -m grpc_tools.protoc --proto_path=googleapis:. --python_out=. --grpc_python_out=. rpc.proto
     ```
 
 After following these steps, two files `rpc_pb2.py` and `rpc_pb2_grpc.py` will
@@ -52,9 +52,9 @@ For example, if you want to generate the RPC modules for the `Router` subserver
 extra steps (after completing all 6 step described above) to get the
 `router_pb2.py` and `router_pb2_grpc.py`:
 
-```
-(lnd)$ curl -o router.proto -s https://raw.githubusercontent.com/lightningnetwork/lnd/master/lnrpc/routerrpc/router.proto
-(lnd)$ python -m grpc_tools.protoc --proto_path=googleapis:. --python_out=. --grpc_python_out=. router.proto
+```shell
+lnd ⛰  curl -o router.proto -s https://raw.githubusercontent.com/lightningnetwork/lnd/master/lnrpc/routerrpc/router.proto
+lnd ⛰  python -m grpc_tools.protoc --proto_path=googleapis:. --python_out=. --grpc_python_out=. router.proto
 ```
 
 ### Imports and Client
@@ -105,13 +105,13 @@ for invoice in stub.SubscribeInvoices(request):
 
 Now, create an invoice for your node at `localhost:10009`and send a payment to
 it from another node.
-```bash
-$ lncli addinvoice --amt=100
+```shell
+lnd ⛰  lncli addinvoice --amt=100
 {
 	"r_hash": <R_HASH>,
 	"pay_req": <PAY_REQ>
 }
-$ lncli sendpayment --pay_req=<PAY_REQ>
+lnd ⛰  lncli sendpayment --pay_req=<PAY_REQ>
 ```
 
 Your Python console should now display the details of the recently satisfied
@@ -210,3 +210,13 @@ details around how to drive `gRPC` from Python.
 There is an [online API documentation](https://api.lightning.community?python)
 available that shows all currently existing RPC methods, including code snippets
 on how to use them.
+
+## Special Scenarios
+
+Due to a conflict between lnd's `UpdateChannelPolicy` gRPC endpoint and the python reserved word list, the follow syntax is required in order to use `PolicyUpdateRequest` with the `global` variable.
+Here is an example of a working format that allows for use of a reserved word `global` in this scenario.
+
+```
+args = {'global': True, 'base_fee_msat': 1000, 'fee_rate': 0.000001, 'time_lock_delta': 40}
+stub.UpdateChannelPolicy(ln.PolicyUpdateRequest(**args))
+```

@@ -16,9 +16,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/shachain"
 	"github.com/lightningnetwork/lnd/tlv"
@@ -36,7 +36,7 @@ var (
 	// previously open, but now closed channels.
 	closedChannelBucket = []byte("closed-chan-bucket")
 
-	// openChanBucket stores all the currently open channels. This bucket
+	// openChannelBucket stores all the currently open channels. This bucket
 	// has a second, nested bucket which is keyed by a node's ID. Within
 	// that node ID bucket, all attributes required to track, update, and
 	// close a channel are stored.
@@ -128,6 +128,11 @@ var (
 	// active "frozen" channels. This key is present only in the leaf
 	// bucket for a given channel.
 	frozenChanKey = []byte("frozen-chans")
+
+	// lastWasRevokeKey is a key that stores true when the last update we sent
+	// was a revocation and false when it was a commitment signature. This is
+	// nil in the case of new channels with no updates exchanged.
+	lastWasRevokeKey = []byte("last-was-revoke")
 )
 
 var (
@@ -189,6 +194,10 @@ const (
 	// A tlv type definition used to serialize an outpoint's indexStatus
 	// for use in the outpoint index.
 	indexStatusType tlv.Type = 0
+
+	// A tlv type definition used to serialize and deserialize a KeyLocator
+	// from the database.
+	keyLocType tlv.Type = 1
 )
 
 // indexStatus is an enum-like type that describes what state the
@@ -225,7 +234,7 @@ const (
 	// funded symmetrically or asymmetrically.
 	DualFunderBit ChannelType = 1 << 0
 
-	// SingleFunderTweakless is similar to the basic SingleFunder channel
+	// SingleFunderTweaklessBit is similar to the basic SingleFunder channel
 	// type, but it omits the tweak for one's key in the commitment
 	// transaction of the remote party.
 	SingleFunderTweaklessBit ChannelType = 1 << 1
@@ -709,6 +718,15 @@ type OpenChannel struct {
 	// this channel. If the value is lower than 500,000, then it's
 	// interpreted as a relative height, or an absolute height otherwise.
 	ThawHeight uint32
+
+	// LastWasRevoke is a boolean that determines if the last update we sent
+	// was a revocation (true) or a commitment signature (false).
+	LastWasRevoke bool
+
+	// RevocationKeyLocator stores the KeyLocator information that we will
+	// need to derive the shachain root for this channel. This allows us to
+	// have private key isolation from lnd.
+	RevocationKeyLocator keychain.KeyLocator
 
 	// TODO(roasbeef): eww
 	Db *DB
@@ -1526,6 +1544,17 @@ func (c *OpenChannel) UpdateCommitment(newCommitment *ChannelCommitment,
 				"updates: %v", err)
 		}
 
+		// Since we have just sent the counterparty a revocation, store true
+		// under lastWasRevokeKey.
+		var b2 bytes.Buffer
+		if err := WriteElements(&b2, true); err != nil {
+			return err
+		}
+
+		if err := chanBucket.Put(lastWasRevokeKey, b2.Bytes()); err != nil {
+			return err
+		}
+
 		// Persist the remote unsigned local updates that are not included
 		// in our new commitment.
 		updateBytes := chanBucket.Get(remoteUnsignedLocalUpdatesKey)
@@ -1548,13 +1577,13 @@ func (c *OpenChannel) UpdateCommitment(newCommitment *ChannelCommitment,
 			}
 		}
 
-		var b2 bytes.Buffer
-		err = serializeLogUpdates(&b2, validUpdates)
+		var b3 bytes.Buffer
+		err = serializeLogUpdates(&b3, validUpdates)
 		if err != nil {
 			return fmt.Errorf("unable to serialize log updates: %v", err)
 		}
 
-		err = chanBucket.Put(remoteUnsignedLocalUpdatesKey, b2.Bytes())
+		err = chanBucket.Put(remoteUnsignedLocalUpdatesKey, b3.Bytes())
 		if err != nil {
 			return fmt.Errorf("unable to restore chanbucket: %v", err)
 		}
@@ -1771,14 +1800,19 @@ type LogUpdate struct {
 	UpdateMsg lnwire.Message
 }
 
-// Encode writes a log update to the provided io.Writer.
-func (l *LogUpdate) Encode(w io.Writer) error {
+// serializeLogUpdate writes a log update to the provided io.Writer.
+func serializeLogUpdate(w io.Writer, l *LogUpdate) error {
 	return WriteElements(w, l.LogIndex, l.UpdateMsg)
 }
 
-// Decode reads a log update from the provided io.Reader.
-func (l *LogUpdate) Decode(r io.Reader) error {
-	return ReadElements(r, &l.LogIndex, &l.UpdateMsg)
+// deserializeLogUpdate reads a log update from the provided io.Reader.
+func deserializeLogUpdate(r io.Reader) (*LogUpdate, error) {
+	l := &LogUpdate{}
+	if err := ReadElements(r, &l.LogIndex, &l.UpdateMsg); err != nil {
+		return nil, err
+	}
+
+	return l, nil
 }
 
 // CircuitKey is used by a channel to uniquely identify the HTLCs it receives
@@ -1940,12 +1974,12 @@ func deserializeLogUpdates(r io.Reader) ([]LogUpdate, error) {
 	return logUpdates, nil
 }
 
-func serializeCommitDiff(w io.Writer, diff *CommitDiff) error {
+func serializeCommitDiff(w io.Writer, diff *CommitDiff) error { // nolint: dupl
 	if err := serializeChanCommit(w, &diff.Commitment); err != nil {
 		return err
 	}
 
-	if err := diff.CommitSig.Encode(w, 0); err != nil {
+	if err := WriteElements(w, diff.CommitSig); err != nil {
 		return err
 	}
 
@@ -1991,10 +2025,16 @@ func deserializeCommitDiff(r io.Reader) (*CommitDiff, error) {
 		return nil, err
 	}
 
-	d.CommitSig = &lnwire.CommitSig{}
-	if err := d.CommitSig.Decode(r, 0); err != nil {
+	var msg lnwire.Message
+	if err := ReadElements(r, &msg); err != nil {
 		return nil, err
 	}
+	commitSig, ok := msg.(*lnwire.CommitSig)
+	if !ok {
+		return nil, fmt.Errorf("expected lnwire.CommitSig, instead "+
+			"read: %T", msg)
+	}
+	d.CommitSig = commitSig
 
 	d.LogUpdates, err = deserializeLogUpdates(r)
 	if err != nil {
@@ -2091,15 +2131,25 @@ func (c *OpenChannel) AppendRemoteCommitChain(diff *CommitDiff) error {
 			return err
 		}
 
+		// We are sending a commitment signature so lastWasRevokeKey should
+		// store false.
+		var b bytes.Buffer
+		if err := WriteElements(&b, false); err != nil {
+			return err
+		}
+		if err := chanBucket.Put(lastWasRevokeKey, b.Bytes()); err != nil {
+			return err
+		}
+
 		// TODO(roasbeef): use seqno to derive key for later LCP
 
 		// With the bucket retrieved, we'll now serialize the commit
 		// diff itself, and write it to disk.
-		var b bytes.Buffer
-		if err := serializeCommitDiff(&b, diff); err != nil {
+		var b2 bytes.Buffer
+		if err := serializeCommitDiff(&b2, diff); err != nil {
 			return err
 		}
-		return chanBucket.Put(commitDiffKey, b.Bytes())
+		return chanBucket.Put(commitDiffKey, b2.Bytes())
 	}, func() {})
 }
 
@@ -2346,8 +2396,9 @@ func (c *OpenChannel) AdvanceCommitChainTail(fwdPkg *FwdPkg,
 		// in their new commitment.
 		updateBytes := chanBucket.Get(unsignedAckedUpdatesKey)
 		if updateBytes == nil {
-			// If there are no updates to sign, we don't need to
-			// filter out any updates.
+			// This shouldn't normally happen as we always store
+			// the number of updates, but could still be
+			// encountered by nodes that are upgrading.
 			newRemoteCommit = &newCommit.Commitment
 			return nil
 		}
@@ -3245,6 +3296,20 @@ func putChanInfo(chanBucket kvdb.RwBucket, channel *OpenChannel) error {
 		return err
 	}
 
+	// Write the RevocationKeyLocator as the first entry in a tlv stream.
+	keyLocRecord := MakeKeyLocRecord(
+		keyLocType, &channel.RevocationKeyLocator,
+	)
+
+	tlvStream, err := tlv.NewStream(keyLocRecord)
+	if err != nil {
+		return err
+	}
+
+	if err := tlvStream.Encode(&w); err != nil {
+		return err
+	}
+
 	if err := chanBucket.Put(chanInfoKey, w.Bytes()); err != nil {
 		return err
 	}
@@ -3416,6 +3481,31 @@ func fetchChanInfo(chanBucket kvdb.RBucket, channel *OpenChannel) error {
 		return err
 	}
 	if err := readChanConfig(r, &channel.RemoteChanCfg); err != nil {
+		return err
+	}
+
+	// Retrieve the boolean stored under lastWasRevokeKey.
+	lastWasRevokeBytes := chanBucket.Get(lastWasRevokeKey)
+	if lastWasRevokeBytes == nil {
+		// If nothing has been stored under this key, we store false in the
+		// OpenChannel struct.
+		channel.LastWasRevoke = false
+	} else {
+		// Otherwise, read the value into the LastWasRevoke field.
+		revokeReader := bytes.NewReader(lastWasRevokeBytes)
+		err := ReadElements(revokeReader, &channel.LastWasRevoke)
+		if err != nil {
+			return err
+		}
+	}
+
+	keyLocRecord := MakeKeyLocRecord(keyLocType, &channel.RevocationKeyLocator)
+	tlvStream, err := tlv.NewStream(keyLocRecord)
+	if err != nil {
+		return err
+	}
+
+	if err := tlvStream.Decode(r); err != nil {
 		return err
 	}
 
@@ -3600,4 +3690,39 @@ func storeThawHeight(chanBucket kvdb.RwBucket, height uint32) error {
 
 func deleteThawHeight(chanBucket kvdb.RwBucket) error {
 	return chanBucket.Delete(frozenChanKey)
+}
+
+// EKeyLocator is an encoder for keychain.KeyLocator.
+func EKeyLocator(w io.Writer, val interface{}, buf *[8]byte) error {
+	if v, ok := val.(*keychain.KeyLocator); ok {
+		err := tlv.EUint32T(w, uint32(v.Family), buf)
+		if err != nil {
+			return err
+		}
+
+		return tlv.EUint32T(w, v.Index, buf)
+	}
+	return tlv.NewTypeForEncodingErr(val, "keychain.KeyLocator")
+}
+
+// DKeyLocator is a decoder for keychain.KeyLocator.
+func DKeyLocator(r io.Reader, val interface{}, buf *[8]byte, l uint64) error {
+	if v, ok := val.(*keychain.KeyLocator); ok {
+		var family uint32
+		err := tlv.DUint32(r, &family, buf, 4)
+		if err != nil {
+			return err
+		}
+		v.Family = keychain.KeyFamily(family)
+
+		return tlv.DUint32(r, &v.Index, buf, 4)
+	}
+	return tlv.NewTypeForDecodingErr(val, "keychain.KeyLocator", l, 8)
+}
+
+// MakeKeyLocRecord creates a Record out of a KeyLocator using the passed
+// Type and the EKeyLocator and DKeyLocator functions. The size will always be
+// 8 as KeyFamily is uint32 and the Index is uint32.
+func MakeKeyLocRecord(typ tlv.Type, keyLoc *keychain.KeyLocator) tlv.Record {
+	return tlv.MakeStaticRecord(typ, keyLoc, 8, EKeyLocator, DKeyLocator)
 }

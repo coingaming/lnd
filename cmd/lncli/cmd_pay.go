@@ -14,12 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcutil"
 	"github.com/jedib0t/go-pretty/table"
 	"github.com/jedib0t/go-pretty/text"
 	"github.com/lightninglabs/protobuf-hex-display/jsonpb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/urfave/cli"
@@ -62,7 +64,7 @@ var (
 		Name: "max_parts",
 		Usage: "the maximum number of partial payments that may be " +
 			"used",
-		Value: 1,
+		Value: routerrpc.DefaultMaxParts,
 	}
 
 	jsonFlag = cli.BoolFlag{
@@ -70,6 +72,26 @@ var (
 		Usage: "if set, payment updates are printed as json " +
 			"messages. Set by default on Windows because table " +
 			"formatting is unsupported.",
+	}
+
+	maxShardSizeSatFlag = cli.UintFlag{
+		Name: "max_shard_size_sat",
+		Usage: "the largest payment split that should be attempted if " +
+			"payment splitting is required to attempt a payment, " +
+			"specified in satoshis",
+	}
+
+	maxShardSizeMsatFlag = cli.UintFlag{
+		Name: "max_shard_size_msat",
+		Usage: "the largest payment split that should be attempted if " +
+			"payment splitting is required to attempt a payment, " +
+			"specified in milli-satoshis",
+	}
+
+	ampFlag = cli.BoolFlag{
+		Name: "amp",
+		Usage: "if set to true, then AMP will be used to complete the " +
+			"payment",
 	}
 )
 
@@ -115,6 +137,7 @@ func paymentFlags() []cli.Flag {
 			Usage: "allow sending a circular payment to self",
 		},
 		dataFlag, inflightUpdatesFlag, maxPartsFlag, jsonFlag,
+		maxShardSizeSatFlag, maxShardSizeMsatFlag, ampFlag,
 	}
 }
 
@@ -130,14 +153,17 @@ var sendPaymentCommand = cli.Command{
 	If payment isn't manually specified, then only a payment request needs
 	to be passed using the --pay_req argument.
 
-	If the payment *is* manually specified, then all four alternative
-	arguments need to be specified in order to complete the payment:
-	    * --dest=N
-	    * --amt=A
-	    * --final_cltv_delta=T
-	    * --payment_hash=H
+	If the payment *is* manually specified, then the following arguments
+	need to be specified in order to complete the payment:
+
+	For invoice with keysend,
+	    --dest=N --amt=A --final_cltv_delta=T --keysend
+	For invoice without payment address:
+	    --dest=N --amt=A --payment_hash=H --final_cltv_delta=T
+	For invoice with payment address:
+	    --dest=N --amt=A --payment_hash=H --final_cltv_delta=T --pay_addr=H
 	`,
-	ArgsUsage: "dest amt payment_hash final_cltv_delta | --pay_req=[payment request]",
+	ArgsUsage: "dest amt payment_hash final_cltv_delta pay_addr | --pay_req=[payment request]",
 	Flags: append(paymentFlags(),
 		cli.StringFlag{
 			Name: "dest, d",
@@ -155,6 +181,10 @@ var sendPaymentCommand = cli.Command{
 		cli.Int64Flag{
 			Name:  "final_cltv_delta",
 			Usage: "the number of blocks the last hop has to reveal the preimage",
+		},
+		cli.StringFlag{
+			Name:  "pay_addr",
+			Usage: "the payment address of the generated invoice",
 		},
 		cli.BoolFlag{
 			Name:  "keysend",
@@ -263,11 +293,16 @@ func sendPayment(ctx *cli.Context) error {
 		Dest:              destNode,
 		Amt:               amount,
 		DestCustomRecords: make(map[uint64][]byte),
+		Amp:               ctx.Bool(ampFlag.Name),
 	}
 
 	var rHash []byte
 
-	if ctx.Bool("keysend") {
+	switch {
+	case ctx.Bool("keysend") && ctx.Bool(ampFlag.Name):
+		return errors.New("either keysend or amp may be set, but not both")
+
+	case ctx.Bool("keysend"):
 		if ctx.IsSet("payment_hash") {
 			return errors.New("cannot set payment hash when using " +
 				"keysend")
@@ -284,7 +319,7 @@ func sendPayment(ctx *cli.Context) error {
 
 		hash := preimage.Hash()
 		rHash = hash[:]
-	} else {
+	case !ctx.Bool(ampFlag.Name):
 		switch {
 		case ctx.IsSet("payment_hash"):
 			rHash, err = hex.DecodeString(ctx.String("payment_hash"))
@@ -299,7 +334,7 @@ func sendPayment(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(rHash) != 32 {
+	if !req.Amp && len(rHash) != 32 {
 		return fmt.Errorf("payment hash must be exactly 32 "+
 			"bytes, is instead %v", len(rHash))
 	}
@@ -313,14 +348,34 @@ func sendPayment(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
+		args = args.Tail()
 		req.FinalCltvDelta = int32(delta)
 	}
+
+	var payAddr []byte
+	switch {
+	case ctx.IsSet("pay_addr"):
+		payAddr, err = hex.DecodeString(ctx.String("pay_addr"))
+	case args.Present():
+		payAddr, err = hex.DecodeString(args.First())
+	}
+
+	if err != nil {
+		return err
+	}
+	// payAddr may be not required if it's a legacy invoice.
+	if len(payAddr) != 0 && len(payAddr) != 32 {
+		return fmt.Errorf("payment addr must be exactly 32 "+
+			"bytes, is instead %v", len(payAddr))
+	}
+	req.PaymentAddr = payAddr
 
 	return sendPaymentRequest(ctx, req)
 }
 
 func sendPaymentRequest(ctx *cli.Context,
 	req *routerrpc.SendPaymentRequest) error {
+	ctxc := getContext()
 
 	conn := getClientConn(ctx, false)
 	defer conn.Close()
@@ -354,6 +409,23 @@ func sendPaymentRequest(ctx *cli.Context,
 
 	req.MaxParts = uint32(ctx.Uint(maxPartsFlag.Name))
 
+	switch {
+	// If the max shard size is specified, then it should either be in sat
+	// or msat, but not both.
+	case ctx.Uint64(maxShardSizeMsatFlag.Name) != 0 &&
+		ctx.Uint64(maxShardSizeSatFlag.Name) != 0:
+		return fmt.Errorf("only --max_split_size_msat or " +
+			"--max_split_size_sat should be set, but not both")
+
+	case ctx.Uint64(maxShardSizeMsatFlag.Name) != 0:
+		req.MaxShardSizeMsat = ctx.Uint64(maxShardSizeMsatFlag.Name)
+
+	case ctx.Uint64(maxShardSizeSatFlag.Name) != 0:
+		req.MaxShardSizeMsat = uint64(lnwire.NewMSatFromSatoshis(
+			btcutil.Amount(ctx.Uint64(maxShardSizeSatFlag.Name)),
+		))
+	}
+
 	// Parse custom data records.
 	data := ctx.String(dataFlag.Name)
 	if data != "" {
@@ -385,9 +457,7 @@ func sendPaymentRequest(ctx *cli.Context,
 	if req.PaymentRequest != "" {
 		// Decode payment request to find out the amount.
 		decodeReq := &lnrpc.PayReqString{PayReq: req.PaymentRequest}
-		decodeResp, err := client.DecodePayReq(
-			context.Background(), decodeReq,
-		)
+		decodeResp, err := client.DecodePayReq(ctxc, decodeReq)
 		if err != nil {
 			return err
 		}
@@ -428,13 +498,13 @@ func sendPaymentRequest(ctx *cli.Context,
 	printJSON := ctx.Bool(jsonFlag.Name)
 	req.NoInflightUpdates = !ctx.Bool(inflightUpdatesFlag.Name) && printJSON
 
-	stream, err := routerClient.SendPaymentV2(context.Background(), req)
+	stream, err := routerClient.SendPaymentV2(ctxc, req)
 	if err != nil {
 		return err
 	}
 
 	finalState, err := printLivePayment(
-		stream, client, printJSON,
+		ctxc, stream, client, printJSON,
 	)
 	if err != nil {
 		return err
@@ -463,6 +533,7 @@ var trackPaymentCommand = cli.Command{
 }
 
 func trackPayment(ctx *cli.Context) error {
+	ctxc := getContext()
 	args := ctx.Args()
 
 	conn := getClientConn(ctx, false)
@@ -483,13 +554,13 @@ func trackPayment(ctx *cli.Context) error {
 		PaymentHash: hash,
 	}
 
-	stream, err := routerClient.TrackPaymentV2(context.Background(), req)
+	stream, err := routerClient.TrackPaymentV2(ctxc, req)
 	if err != nil {
 		return err
 	}
 
 	client := lnrpc.NewLightningClient(conn)
-	_, err = printLivePayment(stream, client, ctx.Bool(jsonFlag.Name))
+	_, err = printLivePayment(ctxc, stream, client, ctx.Bool(jsonFlag.Name))
 	return err
 }
 
@@ -497,7 +568,8 @@ func trackPayment(ctx *cli.Context) error {
 // outputs them as json or as a more user-friendly formatted table. The table
 // option uses terminal control codes to rewrite the output. This call
 // terminates when the payment reaches a final state.
-func printLivePayment(stream routerrpc.Router_TrackPaymentV2Client,
+func printLivePayment(ctxc context.Context,
+	stream routerrpc.Router_TrackPaymentV2Client,
 	client lnrpc.LightningClient, json bool) (*lnrpc.Payment, error) {
 
 	// Terminal escape codes aren't supported on Windows, fall back to json.
@@ -527,7 +599,7 @@ func printLivePayment(stream routerrpc.Router_TrackPaymentV2Client,
 			// Write raw json to stdout.
 			printRespJSON(payment)
 		} else {
-			table := formatPayment(payment, aliases)
+			table := formatPayment(ctxc, payment, aliases)
 
 			// Clear all previously written lines and print the
 			// updated table.
@@ -565,7 +637,7 @@ func newAliasCache(client lnrpc.LightningClient) *aliasCache {
 }
 
 // get returns a node alias either from cache or freshly requested from lnd.
-func (a *aliasCache) get(pubkey string) string {
+func (a *aliasCache) get(ctxc context.Context, pubkey string) string {
 	alias, ok := a.cache[pubkey]
 	if ok {
 		return alias
@@ -573,7 +645,7 @@ func (a *aliasCache) get(pubkey string) string {
 
 	// Request node info.
 	resp, err := a.client.GetNodeInfo(
-		context.Background(),
+		ctxc,
 		&lnrpc.NodeInfoRequest{
 			PubKey: pubkey,
 		},
@@ -596,7 +668,8 @@ func formatMsat(amt int64) string {
 }
 
 // formatPayment formats the payment state as an ascii table.
-func formatPayment(payment *lnrpc.Payment, aliases *aliasCache) string {
+func formatPayment(ctxc context.Context, payment *lnrpc.Payment,
+	aliases *aliasCache) string {
 	t := table.NewWriter()
 
 	// Build table header.
@@ -635,7 +708,7 @@ func formatPayment(payment *lnrpc.Payment, aliases *aliasCache) string {
 
 		hops := []string{}
 		for _, h := range route.Hops {
-			alias := aliases.get(h.PubKey)
+			alias := aliases.get(ctxc, h.PubKey)
 			hops = append(hops, alias)
 		}
 
@@ -857,12 +930,13 @@ func sendToRoute(ctx *cli.Context) error {
 }
 
 func sendToRouteRequest(ctx *cli.Context, req *routerrpc.SendToRouteRequest) error {
+	ctxc := getContext()
 	conn := getClientConn(ctx, false)
 	defer conn.Close()
 
 	client := routerrpc.NewRouterClient(conn)
 
-	resp, err := client.SendToRouteV2(context.Background(), req)
+	resp, err := client.SendToRouteV2(ctxc, req)
 	if err != nil {
 		return err
 	}

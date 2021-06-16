@@ -8,6 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/psbt"
@@ -249,6 +250,15 @@ func (i *PsbtIntent) Verify(packet *psbt.Packet) error {
 			"output amount sum")
 	}
 
+	// To avoid possible malleability, all inputs to a funding transaction
+	// must be SegWit spends.
+	err = verifyAllInputsSegWit(packet.UnsignedTx.TxIn, packet.Inputs)
+	if err != nil {
+		return fmt.Errorf("cannot use TX for channel funding, "+
+			"not all inputs are SegWit spends, risk of "+
+			"malleability: %v", err)
+	}
+
 	i.PendingPsbt = packet
 	i.State = PsbtVerified
 	return nil
@@ -392,6 +402,53 @@ func (i *PsbtIntent) Cancel() {
 	i.ShimIntent.Cancel()
 }
 
+// Inputs returns all inputs to the final funding transaction that we know
+// about. These are only known after the PSBT has been verified.
+func (i *PsbtIntent) Inputs() []wire.OutPoint {
+	var inputs []wire.OutPoint
+
+	switch i.State {
+
+	// We return the inputs to the pending psbt.
+	case PsbtVerified:
+		for _, in := range i.PendingPsbt.UnsignedTx.TxIn {
+			inputs = append(inputs, in.PreviousOutPoint)
+		}
+
+	// We return the inputs to the final funding tx.
+	case PsbtFinalized, PsbtFundingTxCompiled:
+		for _, in := range i.FinalTX.TxIn {
+			inputs = append(inputs, in.PreviousOutPoint)
+		}
+
+	// In all other states we cannot know the inputs to the funding tx, and
+	// return an empty list.
+	default:
+	}
+
+	return inputs
+}
+
+// Outputs returns all outputs of the final funding transaction that we
+// know about. These are only known after the PSBT has been verified.
+func (i *PsbtIntent) Outputs() []*wire.TxOut {
+	switch i.State {
+
+	// We return the outputs of the pending psbt.
+	case PsbtVerified:
+		return i.PendingPsbt.UnsignedTx.TxOut
+
+	// We return the outputs of the final funding tx.
+	case PsbtFinalized, PsbtFundingTxCompiled:
+		return i.FinalTX.TxOut
+
+	// In all other states we cannot know the final outputs, and return an
+	// empty list.
+	default:
+		return nil
+	}
+}
+
 // PsbtAssembler is a type of chanfunding.Assembler wherein the funding
 // transaction is constructed outside of lnd by using partially signed bitcoin
 // transactions (PSBT).
@@ -486,4 +543,56 @@ func verifyInputsSigned(ins []*wire.TxIn) error {
 		}
 	}
 	return nil
+}
+
+// verifyAllInputsSegWit makes sure all inputs to a transaction are SegWit
+// spends. This is a bit tricky because the PSBT spec doesn't require the
+// WitnessUtxo field to be set. Therefore if only a NonWitnessUtxo is given, we
+// need to look at it and make sure it's either a witness pkScript or a nested
+// SegWit spend.
+func verifyAllInputsSegWit(txIns []*wire.TxIn, ins []psbt.PInput) error {
+	for idx, in := range ins {
+		switch {
+		// The optimal case is that the witness UTXO is set explicitly.
+		case in.WitnessUtxo != nil:
+
+		// Only the non witness UTXO field is set, we need to inspect it
+		// to make sure it's not P2PKH or bare P2SH.
+		case in.NonWitnessUtxo != nil:
+			utxo := in.NonWitnessUtxo
+			txIn := txIns[idx]
+			txOut := utxo.TxOut[txIn.PreviousOutPoint.Index]
+
+			if !isSegWitScript(txOut.PkScript) &&
+				!isSegWitScript(in.RedeemScript) {
+
+				return fmt.Errorf("input %d is non-SegWit "+
+					"spend or missing redeem script", idx)
+			}
+
+		// This should've already been caught by a previous check but we
+		// keep it in for completeness' sake.
+		default:
+			return fmt.Errorf("input %d has no UTXO information",
+				idx)
+		}
+	}
+
+	return nil
+}
+
+// isSegWitScript returns true if the given pkScript can be parsed successfully
+// as a SegWit v0 spend.
+func isSegWitScript(pkScript []byte) bool {
+	if len(pkScript) == 0 {
+		return false
+	}
+
+	parsed, err := txscript.ParsePkScript(pkScript)
+	if err != nil {
+		return false
+	}
+
+	return parsed.Class() == txscript.WitnessV0PubKeyHashTy ||
+		parsed.Class() == txscript.WitnessV0ScriptHashTy
 }

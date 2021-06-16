@@ -72,6 +72,10 @@ var allTestCases = []*testCase{
 		test: testListChannels,
 	},
 	{
+		name: "update channel status",
+		test: testUpdateChanStatus,
+	},
+	{
 		name: "list outgoing payments",
 		test: testListPayments,
 	},
@@ -227,8 +231,16 @@ var allTestCases = []*testCase{
 		test: testHoldInvoicePersistence,
 	},
 	{
+		name: "hold invoice force close",
+		test: testHoldInvoiceForceClose,
+	},
+	{
 		name: "cpfp",
 		test: testCPFP,
+	},
+	{
+		name: "anchors reserved value",
+		test: testAnchorReservedValue,
 	},
 	{
 		name: "macaroon authentication",
@@ -259,6 +271,18 @@ var allTestCases = []*testCase{
 		test: testSendToRouteMultiPath,
 	},
 	{
+		name: "sendtoroute amp",
+		test: testSendToRouteAMP,
+	},
+	{
+		name: "sendpayment amp",
+		test: testSendPaymentAMP,
+	},
+	{
+		name: "sendpayment amp invoice",
+		test: testSendPaymentAMPInvoice,
+	},
+	{
 		name: "send multi path payment",
 		test: testSendMultiPathPayment,
 	},
@@ -285,5 +309,17 @@ var allTestCases = []*testCase{
 	{
 		name: "stateless init",
 		test: testStatelessInit,
+	},
+	{
+		name: "wallet import account",
+		test: testWalletImportAccount,
+	},
+	{
+		name: "wallet import pubkey",
+		test: testWalletImportPubKey,
+	},
+	{
+		name: "etcd_failover",
+		test: testEtcdFailover,
 	},
 }

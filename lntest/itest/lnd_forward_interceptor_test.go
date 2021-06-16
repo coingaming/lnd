@@ -9,7 +9,6 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/lightningnetwork/lnd"
 	"github.com/lightningnetwork/lnd/chainreg"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
@@ -128,6 +127,15 @@ func testForwardInterceptor(net *lntest.NetworkHarness, t *harnessTest) {
 			case routerrpc.ResolveHoldForwardAction_FAIL:
 				require.Equal(t.t, lnrpc.HTLCAttempt_FAILED,
 					attempt.Status, "expected payment to fail")
+
+				// Assert that we get a temporary channel
+				// failure which has a channel update.
+				require.NotNil(t.t, attempt.Failure)
+				require.NotNil(t.t, attempt.Failure.ChannelUpdate)
+
+				require.Equal(t.t,
+					lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE,
+					attempt.Failure.Code)
 
 			// For settle and resume we make sure the payment is successful.
 			case routerrpc.ResolveHoldForwardAction_SETTLE:
@@ -341,7 +349,7 @@ func (c *interceptorTestContext) waitForChannels() {
 	// Wait for all nodes to have seen all channels.
 	for _, chanPoint := range c.networkChans {
 		for _, node := range c.nodes {
-			txid, err := lnd.GetChanPointFundingTxid(chanPoint)
+			txid, err := lnrpc.GetChanPointFundingTxid(chanPoint)
 			require.NoError(c.t.t, err, "unable to get txid")
 
 			point := wire.OutPoint{

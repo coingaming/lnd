@@ -2120,6 +2120,8 @@ func (lc *LightningChannel) restorePendingLocalUpdates(
 	// If we did have a dangling commit, then we'll examine which updates
 	// we included in that state and re-insert them into our update log.
 	for _, logUpdate := range pendingRemoteCommitDiff.LogUpdates {
+		logUpdate := logUpdate
+
 		payDesc, err := lc.logUpdateToPayDesc(
 			&logUpdate, lc.remoteUpdateLog, pendingHeight,
 			chainfee.SatPerKWeight(pendingCommit.FeePerKw),
@@ -3022,7 +3024,7 @@ func genRemoteHtlcSigJobs(keyRing *CommitmentKeyRing,
 			Hash:  txHash,
 			Index: uint32(htlc.remoteOutputIndex),
 		}
-		sigJob.Tx, err = createHtlcTimeoutTx(
+		sigJob.Tx, err = CreateHtlcTimeoutTx(
 			chanType, op, outputAmt, htlc.Timeout,
 			uint32(remoteChanCfg.CsvDelay),
 			keyRing.RevocationKey, keyRing.ToLocalKey,
@@ -3075,7 +3077,7 @@ func genRemoteHtlcSigJobs(keyRing *CommitmentKeyRing,
 			Hash:  txHash,
 			Index: uint32(htlc.remoteOutputIndex),
 		}
-		sigJob.Tx, err = createHtlcSuccessTx(
+		sigJob.Tx, err = CreateHtlcSuccessTx(
 			chanType, op, outputAmt, uint32(remoteChanCfg.CsvDelay),
 			keyRing.RevocationKey, keyRing.ToLocalKey,
 		)
@@ -3258,7 +3260,7 @@ func (lc *LightningChannel) getUnsignedAckedUpdates() []channeldb.LogUpdate {
 	chanID := lnwire.NewChanIDFromOutPoint(&lc.channelState.FundingOutpoint)
 
 	// Fetch the last remote update that we have signed for.
-	lastRemoteCommitted := lc.remoteCommitChain.tip().theirMessageIndex
+	lastRemoteCommitted := lc.remoteCommitChain.tail().theirMessageIndex
 
 	// Fetch the last remote update that we have acked.
 	lastLocalCommitted := lc.localCommitChain.tail().theirMessageIndex
@@ -3892,16 +3894,38 @@ func (lc *LightningChannel) ProcessChanSyncMsg(
 			return nil, nil, nil, err
 		}
 
+		var commitUpdates []lnwire.Message
+
 		// Next, we'll need to send over any updates we sent as part of
 		// this new proposed commitment state.
 		for _, logUpdate := range commitDiff.LogUpdates {
-			updates = append(updates, logUpdate.UpdateMsg)
+			commitUpdates = append(commitUpdates, logUpdate.UpdateMsg)
 		}
 
 		// With the batch of updates accumulated, we'll now re-send the
 		// original CommitSig message required to re-sync their remote
 		// commitment chain with our local version of their chain.
-		updates = append(updates, commitDiff.CommitSig)
+		commitUpdates = append(commitUpdates, commitDiff.CommitSig)
+
+		// NOTE: If a revocation is not owed, then updates is empty.
+		if lc.channelState.LastWasRevoke {
+			// If lastWasRevoke is set to true, a revocation was last and we
+			// need to reorder the updates so that the revocation stored in
+			// updates comes after the LogUpdates+CommitSig.
+			//
+			// ---logupdates--->
+			// ---commitsig---->
+			// ---revocation--->
+			updates = append(commitUpdates, updates...)
+		} else {
+			// Otherwise, the revocation should come before LogUpdates
+			// + CommitSig.
+			//
+			// ---revocation--->
+			// ---logupdates--->
+			// ---commitsig---->
+			updates = append(updates, commitUpdates...)
+		}
 
 		openedCircuits = commitDiff.OpenedCircuitKeys
 		closedCircuits = commitDiff.ClosedCircuitKeys
@@ -4097,7 +4121,7 @@ func genHtlcSigValidationJobs(localCommitmentView *commitment,
 				htlcFee := HtlcSuccessFee(chanType, feePerKw)
 				outputAmt := htlc.Amount.ToSatoshis() - htlcFee
 
-				successTx, err := createHtlcSuccessTx(
+				successTx, err := CreateHtlcSuccessTx(
 					chanType, op, outputAmt,
 					uint32(localChanCfg.CsvDelay),
 					keyRing.RevocationKey, keyRing.ToLocalKey,
@@ -4151,7 +4175,7 @@ func genHtlcSigValidationJobs(localCommitmentView *commitment,
 				htlcFee := HtlcTimeoutFee(chanType, feePerKw)
 				outputAmt := htlc.Amount.ToSatoshis() - htlcFee
 
-				timeoutTx, err := createHtlcTimeoutTx(
+				timeoutTx, err := CreateHtlcTimeoutTx(
 					chanType, op, outputAmt, htlc.Timeout,
 					uint32(localChanCfg.CsvDelay),
 					keyRing.RevocationKey, keyRing.ToLocalKey,
@@ -5667,7 +5691,7 @@ func newOutgoingHtlcResolution(signer input.Signer,
 
 	// With the fee calculated, re-construct the second level timeout
 	// transaction.
-	timeoutTx, err := createHtlcTimeoutTx(
+	timeoutTx, err := CreateHtlcTimeoutTx(
 		chanType, op, secondLevelOutputAmt, htlc.RefundTimeout,
 		csvDelay, keyRing.RevocationKey, keyRing.ToLocalKey,
 	)
@@ -5805,7 +5829,7 @@ func newIncomingHtlcResolution(signer input.Signer,
 	// taking into account the fee rate used.
 	htlcFee := HtlcSuccessFee(chanType, feePerKw)
 	secondLevelOutputAmt := htlc.Amt.ToSatoshis() - htlcFee
-	successTx, err := createHtlcSuccessTx(
+	successTx, err := CreateHtlcSuccessTx(
 		chanType, op, secondLevelOutputAmt, csvDelay,
 		keyRing.RevocationKey, keyRing.ToLocalKey,
 	)

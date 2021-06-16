@@ -75,6 +75,13 @@ type mockFeeEstimator struct {
 	quit chan struct{}
 }
 
+func newMockFeeEstimator() *mockFeeEstimator {
+	return &mockFeeEstimator{
+		byteFeeIn: make(chan chainfee.SatPerKWeight),
+		quit:      make(chan struct{}),
+	}
+}
+
 func (m *mockFeeEstimator) EstimateFeePerKW(
 	numBlocks uint32) (chainfee.SatPerKWeight, error) {
 
@@ -791,6 +798,20 @@ type mockInvoiceRegistry struct {
 	cleanup func()
 }
 
+type mockChainNotifier struct {
+	chainntnfs.ChainNotifier
+}
+
+// RegisterBlockEpochNtfn mocks a successful call to register block
+// notifications.
+func (m *mockChainNotifier) RegisterBlockEpochNtfn(*chainntnfs.BlockEpoch) (
+	*chainntnfs.BlockEpochEvent, error) {
+
+	return &chainntnfs.BlockEpochEvent{
+		Cancel: func() {},
+	}, nil
+}
+
 func newMockRegistry(minDelta uint32) *mockInvoiceRegistry {
 	cdb, cleanup, err := newDB()
 	if err != nil {
@@ -799,7 +820,10 @@ func newMockRegistry(minDelta uint32) *mockInvoiceRegistry {
 
 	registry := invoices.NewRegistry(
 		cdb,
-		invoices.NewInvoiceExpiryWatcher(clock.NewDefaultClock()),
+		invoices.NewInvoiceExpiryWatcher(
+			clock.NewDefaultClock(), 0, 0, nil,
+			&mockChainNotifier{},
+		),
 		&invoices.RegistryConfig{
 			FinalCltvRejectDelta: 5,
 		},
